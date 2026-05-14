@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>AI 音色鉴定 · 歌唱匹配</title>
+  <link href="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body { background: linear-gradient(135deg, #5f2c82, #49a09d); min-height: 100vh; color: #333; }
+    .glass-card {
+      background: rgba(255,255,255,0.94); backdrop-filter: blur(10px);
+      border-radius: 28px; box-shadow: 0 25px 50px rgba(0,0,0,0.25);
+      padding: 2rem; margin: 2rem auto; max-width: 750px;
+    }
+    .btn-gradient {
+      background: linear-gradient(135deg, #5f2c82, #49a09d); border: none;
+      color: white; border-radius: 50px; padding: 0.75rem 2rem; font-weight: 600;
+      transition: all 0.3s; box-shadow: 0 4px 15px rgba(95,44,130,0.4);
+    }
+    .btn-gradient:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(73,160,157,0.5); }
+    .btn-outline-accent {
+      border: 2px solid #5f2c82; color: #5f2c82; border-radius: 50px;
+      padding: 0.75rem 2rem; font-weight: 600; background: white;
+    }
+    .btn-outline-accent:hover { background: #5f2c82; color: white; }
+    .prompt-box {
+      background: rgba(95,44,130,0.08); border-left: 4px solid #5f2c82;
+      border-radius: 16px; padding: 1.2rem; margin: 1.5rem 0;
+    }
+    .note-tag { background: #e0d4f5; padding: 4px 12px; border-radius: 20px; font-weight: 500; }
+    .result-star { background: #f3e8ff; padding: 6px 14px; border-radius: 20px; display: inline-block; margin: 4px; }
+    .song-card { background: white; border-radius: 14px; padding: 1rem; margin: 0.5rem 0; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+    .countdown-big { font-size: 1.2rem; color: #d32f2f; font-weight: 700; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="glass-card">
+    <h2 class="text-center fw-bold mb-0">🎤 AI 声纹鉴定</h2>
+    <p class="text-center text-muted">发现你的音色，找到适合的歌</p>
+
+    <div class="d-flex flex-wrap gap-3 justify-content-center my-4">
+      <button id="recordBtn" class="btn-gradient">
+        <span id="recordIcon">🎙️</span> <span id="recordText">开始录音</span>
+      </button>
+      <label class="btn-outline-accent" style="cursor:pointer;">
+        📂 上传文件
+        <input type="file" id="fileInput" accept="audio/*" hidden>
+      </label>
+    </div>
+
+    <!-- 歌曲引导区 -->
+    <div id="promptBox" class="prompt-box d-none">
+      <h6 class="fw-bold">🎵 请完整跟唱下方片段（约30秒）</h6>
+      <div class="bg-white rounded-3 p-3">
+        <h5 id="songTitle" class="text-primary"></h5>
+        <p id="lyricText" class="fw-bold fs-5"></p>
+        <small id="rangeHint" class="text-muted"></small>
+        <div id="countdown" class="countdown-big mt-2"></div>
+      </div>
+      <button id="nextSongBtn" class="btn btn-sm btn-outline-secondary mt-2 d-none">下一首 ▶</button>
+    </div>
+
+    <!-- 录音状态 + 回放 -->
+    <div id="recordingStatus" class="text-center d-none">
+      <div class="spinner-border" role="status"></div>
+      <p class="mt-2">🔴 录音中... <span id="timer">00:00</span></p>
+    </div>
+    <div id="playbackArea" class="d-none">
+      <p class="fw-bold">🎧 录音回放：</p>
+      <audio id="audioPlayback" class="w-100" controls></audio>
+    </div>
+    <div id="statusMsg" class="text-center mb-3"></div>
+
+    <!-- 分析结果 -->
+    <div id="resultCard" class="d-none mt-4">
+      <hr>
+      <h5 class="fw-bold">📊 声音分析报告</h5>
+      <div class="row">
+        <div class="col-sm-6">
+          <p><strong>音域：</strong> <span id="vocalRange" class="result-star"></span></p>
+          <p><strong>稳定性：</strong> <span id="stability"></span></p>
+        </div>
+        <div class="col-sm-6">
+          <p><strong>音色：</strong> <span id="timbre"></span></p>
+          <p><strong>最像歌手：</strong></p>
+          <div id="starList"></div>
+        </div>
+      </div>
+      <h6 class="fw-bold mt-3">🎶 推荐舒适区歌曲</h6>
+      <div id="songList"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ======== 升级版引导歌曲库：均为大众熟知的经典/流行歌曲，歌词长度保证30秒 ========
+  const guideClips = [
+    {
+      title: '孤勇者 - 陈奕迅 (高音挑战)',
+      lyric: '去吗 去啊 以最卑微的梦　战吗 战啊 以最孤高的梦　致那黑夜中的呜咽与怒吼　谁说站在光里的才算英雄',
+      range: 'C4 ~ C6',
+      duration: 30
+    },
+    {
+      title: '起风了 - 买辣椒也用券 (全音域)',
+      lyric: '我曾将青春翻涌成她　也曾指尖弹出盛夏　心之所动 且就随缘去吧　逆着光行走 任风吹雨打',
+      range: 'A3 ~ E5',
+      duration: 30
+    },
+    {
+      title: '夜曲 - 周杰伦 (低音过渡)',
+      lyric: '为你弹奏肖邦的夜曲　纪念我死去的爱情　跟夜风一样的声音　心碎的很好听',
+      range: 'G3 ~ B4',
+      duration: 30
+    },
+    {
+      title: '默 - 那英 (抒情中高音)',
+      lyric: '忍不住化身一条固执的鱼　逆着洋流独自游到底　年少时候虔诚发过的誓　沉默地沉没在深海里',
+      range: 'A3 ~ E5',
+      duration: 30
+    },
+    {
+      title: '月亮代表我的心 - 邓丽君 (经典低音)',
+      lyric: '你问我爱你有多深　我爱你有几分　我的情也真　我的爱也真　月亮代表我的心',
+      range: 'C4 ~ G5',
+      duration: 30
+    },
+    {
+      title: 'Love Story - Taylor Swift (英文颤音)',
+      lyric: 'Romeo take me somewhere we can be alone　I\'ll be waiting all there\'s left to do is run',
+      range: 'C#4 ~ F5',
+      duration: 30
+    }
+  ];
+
+  // 随机打乱，保证每次录音提示顺序不同
+  function shuffle(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+  const shuffled = shuffle([...guideClips]);
+
+  let mediaRecorder, audioChunks = [];
+  let timerInterval, countdownInterval, seconds = 0;
+  let currentClipIdx = 0;
+  let currentCountdown = 0;
+
+  const recordBtn = document.getElementById('recordBtn');
+  const recordIcon = document.getElementById('recordIcon');
+  const recordText = document.getElementById('recordText');
+  const promptBox = document.getElementById('promptBox');
+  const recordingStatus = document.getElementById('recordingStatus');
+  const timerSpan = document.getElementById('timer');
+  const playbackArea = document.getElementById('playbackArea');
+  const audioPlayback = document.getElementById('audioPlayback');
+  const statusMsg = document.getElementById('statusMsg');
+  const resultCard = document.getElementById('resultCard');
+  const fileInput = document.getElementById('fileInput');
+  const nextSongBtn = document.getElementById('nextSongBtn');
+
+  function resetUI() {
+    clearInterval(timerInterval);
+    clearInterval(countdownInterval);
+    recordingStatus.classList.add('d-none');
+    promptBox.classList.add('d-none');
+    playbackArea.classList.add('d-none');
+    seconds = 0;
+    timerSpan.textContent = '00:00';
+  }
+
+  function startTimer() {
+    timerInterval = setInterval(() => {
+      seconds++;
+      const m = Math.floor(seconds/60).toString().padStart(2,'0');
+      const s = (seconds%60).toString().padStart(2,'0');
+      timerSpan.textContent = `${m}:${s}`;
+    }, 1000);
+  }
+
+  function showClip(index) {
+    if (index >= shuffled.length) {
+      document.getElementById('lyricText').textContent = '✅ 引导完成，可以停止录音了';
+      document.getElementById('countdown').textContent = '';
+      clearInterval(countdownInterval);
+      nextSongBtn.classList.add('d-none');
+      return;
+    }
+    const clip = shuffled[index];
+    document.getElementById('songTitle').textContent = clip.title;
+    document.getElementById('lyricText').textContent = clip.lyric;
+    document.getElementById('rangeHint').textContent = `音域跨度：${clip.range}`;
+    currentCountdown = clip.duration;
+    const countdownEl = document.getElementById('countdown');
+    countdownEl.textContent = `⏳ 剩余 ${currentCountdown} 秒`;
+    clearInterval(countdownInterval);
+    countdownInterval = setInterval(() => {
+      currentCountdown--;
+      countdownEl.textContent = `⏳ 剩余 ${currentCountdown} 秒`;
+      if (currentCountdown <= 0) {
+        clearInterval(countdownInterval);
+        currentClipIdx++;
+        showClip(currentClipIdx);
+      }
+    }, 1000);
+    nextSongBtn.classList.remove('d-none');
+  }
+
+  nextSongBtn.addEventListener('click', () => {
+    clearInterval(countdownInterval);
+    currentClipIdx++;
+    showClip(currentClipIdx);
+  });
+
+  // ============== 录音逻辑 ==============
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      mediaRecorder.ondataavailable = e => {
+        if (e.data.size > 0) audioChunks.push(e.data);
+      };
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        resetUI();
+        const blob = new Blob(audioChunks, { type: 'audio/webm' });
+        audioPlayback.src = URL.createObjectURL(blob);
+        playbackArea.classList.remove('d-none');
+        statusMsg.innerHTML = '<div class="spinner-border spinner-border-sm"></div> 分析中…';
+        await uploadAudio(blob, 'recording.webm');
+      };
+      mediaRecorder.start();
+      audioChunks = [];
+      promptBox.classList.remove('d-none');
+      recordingStatus.classList.remove('d-none');
+      playbackArea.classList.add('d-none');
+      resultCard.classList.add('d-none');
+      statusMsg.innerHTML = '';
+      recordIcon.textContent = '⏹️';
+      recordText.textContent = '停止录音';
+      recordBtn.classList.replace('btn-gradient', 'btn-danger');
+      recordBtn.style.background = '#dc3545';
+      currentClipIdx = 0;
+      showClip(0);
+      startTimer();
+    } catch (err) {
+      alert('无法访问麦克风：' + err.message);
+    }
+  }
+
+  function stopRecording() {
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      mediaRecorder.stop();
+      recordIcon.textContent = '🎙️';
+      recordText.textContent = '开始录音';
+      recordBtn.classList.replace('btn-danger', 'btn-gradient');
+      recordBtn.style.background = '';
+    }
+  }
+
+  recordBtn.addEventListener('click', () => {
+    if (mediaRecorder && mediaRecorder.state === 'recording') stopRecording();
+    else startRecording().catch(console.error);
+  });
+
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    statusMsg.innerHTML = '<div class="spinner-border spinner-border-sm"></div> 分析中…';
+    uploadAudio(file, file.name);
+  });
+
+  async function uploadAudio(blob, filename) {
+    const formData = new FormData();
+    formData.append('audio', blob, filename);
+    try {
+      const res = await fetch('/api/analyze', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (data.error) {
+        statusMsg.innerHTML = `❌ ${data.error}`;
+        return;
+      }
+      displayResult(data);
+      statusMsg.innerHTML = '✅ 分析完成';
+    } catch (err) {
+      statusMsg.innerHTML = '❌ 网络错误或服务器未启动';
+    }
+  }
+
+  function displayResult(data) {
+    resultCard.classList.remove('d-none');
+    document.getElementById('vocalRange').textContent = data.vocal_range;
+    document.getElementById('stability').textContent = data.stability;
+    document.getElementById('timbre').textContent = data.timbre_quality;
+
+    const starList = document.getElementById('starList');
+    starList.innerHTML = '';
+    data.similar_stars.forEach(s => {
+      const span = document.createElement('span');
+      span.className = 'result-star';
+      let extra = s.genre ? ` (${s.genre})` : '';
+      let src = s.source ? `<small class="text-muted">[${s.source}]</small>` : '';
+      span.innerHTML = `${s.name}${extra} ${src} <small>${(s.similarity*100).toFixed(1)}%</small>`;
+      starList.appendChild(span);
+    });
+
+    const songList = document.getElementById('songList');
+    songList.innerHTML = '';
+    if (data.comfortable_songs.length === 0) {
+      songList.innerHTML = '<p class="text-muted">暂无匹配，多录几句试试~</p>';
+      return;
+    }
+    data.comfortable_songs.forEach(song => {
+      const div = document.createElement('div');
+      div.className = 'song-card d-flex justify-content-between align-items-center';
+      let songHtml = `<span><strong>${song.title}</strong> – ${song.artist}`;
+      if (song.url) songHtml += ` <a href="${song.url}" target="_blank" class="text-decoration-none">▶</a>`;
+      songHtml += '</span>';
+      songHtml += `<span class="badge bg-info">${song.fit}</span>`;
+      div.innerHTML = songHtml;
+      songList.appendChild(div);
+    });
+  }
+</script>
+</body>
+</html>
